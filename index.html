@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trích xuất link Audio / Video</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1b1f24;--muted:#6b7280;--line:#d9dde3;--acc:#2563eb;--aud:#7c3aed;--vid:#e11d48;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111418;--card:#1a1f26;--text:#e8eaed;--muted:#9aa3af;--line:#313843;--acc:#60a5fa;--aud:#a78bfa;--vid:#fb7185}}
+:root[data-theme="dark"]{--bg:#111418;--card:#1a1f26;--text:#e8eaed;--muted:#9aa3af;--line:#313843;--acc:#60a5fa;--aud:#a78bfa;--vid:#fb7185}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:16px 20px 0}h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:var(--muted);font-size:13px}
+main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 20px;max-width:1200px;margin:auto}
+@media(max-width:760px){main{grid-template-columns:1fr}}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;min-width:0}
+h2{margin:0 0 10px;font-size:14px;color:var(--muted);font-weight:600}
+#drop{flex:1;min-height:320px;width:100%;resize:vertical;border:2px dashed var(--line);border-radius:10px;padding:12px;background:transparent;color:var(--text);font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}
+#drop.over{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,transparent)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+button{border:1px solid var(--line);background:var(--card);color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+label.chk{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center}
+#list{display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:70vh}
+.item{display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.tag{font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;color:#fff;flex:none}
+.tag.audio{background:var(--aud)}.tag.video{background:var(--vid)}
+.name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.name small{display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+button.cp{flex:none;padding:6px 10px}
+a.dl{flex:none;text-decoration:none;background:var(--acc);color:#fff;padding:6px 10px;border-radius:8px;font-size:13px}
+.empty,.note{color:var(--muted);font-size:13px;padding:8px 2px}
+.err{color:var(--vid);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎧 Trích xuất link Audio / Video</h1>
+  <p>Dán hoặc kéo thả danh sách link (hoặc file .txt) vào khung bên trái — link tải hiện bên phải.</p>
+</header>
+<main>
+  <section>
+    <h2>Danh sách link</h2>
+    <textarea id="drop" placeholder="Dán link vào đây, mỗi dòng một link…&#10;hoặc kéo thả link / file .txt vào khung này" spellcheck="false"></textarea>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="scan" checked> Quét trang web (qua server)</label>
+      <button id="clear">Xoá</button>
+      <button class="p" id="go">Trích xuất</button>
+    </div>
+  </section>
+  <section>
+    <h2 id="count">Kết quả</h2>
+    <div class="row" style="margin:0 0 10px"><button id="copy">Copy tất cả link</button><button id="fa">Chỉ audio</button><button id="fv">Chỉ video</button><button id="fall">Tất cả</button></div>
+    <div id="list"><div class="empty">Chưa có kết quả.</div></div>
+  </section>
+</main>
+<script>
+const AUD=['mp3','m4a','aac','wav','flac','ogg','oga','opus','wma','weba'];
+const VID=['mp4','webm','mkv','mov','avi','m4v','flv','wmv','ogv','3gp','ts','m3u8'];
+const $=id=>document.getElementById(id);
+let results=[],filter='all';
+const typeOf=u=>{try{const e=new URL(u).pathname.split('.').pop().toLowerCase();return AUD.includes(e)?'audio':VID.includes(e)?'video':null}catch{return null}};
+const urlsIn=t=>[...new Set((t.match(/https?:\/\/[^\s"'<>)\]]+/g)||[]).map(u=>u.replace(/[.,;]+$/,'')))];
+const fname=u=>{try{return decodeURIComponent(new URL(u).pathname.split('/').pop())||u}catch{return u}};
+
+async function scanPage(u){
+  const r=await fetch('/api/extract?url='+encodeURIComponent(u));
+  const j=await r.json();
+  if(!j.items.length&&j.errors.length)throw new Error(j.errors.join('; '));
+  return j.items;
+}
+
+async function run(){
+  const urls=urlsIn($('drop').value),out=new Map(),errs=[];
+  $('list').innerHTML='<div class="empty">Đang xử lý…</div>';
+  for(const u of urls){
+    const t=typeOf(u);
+    if(t){out.set(u,{url:u,type:t,src:u});continue}
+    if($('scan').checked){
+      try{const it=await scanPage(u);if(!it.length)errs.push(u+' → server không tìm thấy file nào');it.forEach(m=>{if(!out.has(m.url))out.set(m.url,{url:m.url,type:m.type,src:u,title:m.title})})}
+      catch(e){errs.push(u+' → '+e.message)}
+    }else errs.push(u);
+  }
+  results=[...out.values()];render(errs);
+}
+
+function render(errs=[]){
+  const list=results.filter(r=>filter==='all'||r.type===filter);
+  $('count').textContent=`Kết quả (${list.length} file)`;
+  const L=$('list');L.innerHTML='';
+  if(!list.length)L.innerHTML='<div class="empty">Không tìm thấy file audio/video nào.</div>';
+  list.forEach(r=>{
+    const d=document.createElement('div');d.className='item';
+    const tag=document.createElement('span');tag.className='tag '+r.type;tag.textContent=r.type==='audio'?'AUDIO':'VIDEO';
+    const n=document.createElement('div');n.className='name';n.textContent=r.title||fname(r.url);
+    const s=document.createElement('small');s.textContent=r.url;n.appendChild(s);
+    const a=document.createElement('a');a.className='dl';a.href=r.url;a.target='_blank';a.rel='noopener noreferrer';a.setAttribute('download',fname(r.url));a.textContent='Tải';
+    const c=document.createElement('button');c.className='cp';c.textContent='Copy';
+    c.onclick=async()=>{try{await navigator.clipboard.writeText(r.url)}catch{const t=document.createElement('textarea');t.value=r.url;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove()}c.textContent='Đã copy ✓';setTimeout(()=>c.textContent='Copy',1500)};
+    d.append(tag,n,c,a);L.appendChild(d);
+  });
+  if(errs.length){
+    const e=document.createElement('div');e.className='note';
+    e.innerHTML='<b>'+errs.length+' link không lấy được file media</b> (trang cần đăng nhập/DRM, hoặc chưa cài yt-dlp). Thử: pip install -U yt-dlp';
+    errs.forEach(x=>{const q=document.createElement('div');q.className='err';q.textContent=x;e.appendChild(q)});L.appendChild(e);
+  }
+}
+
+const box=$('drop');
+['dragenter','dragover'].forEach(ev=>box.addEventListener(ev,e=>{e.preventDefault();box.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>box.addEventListener(ev,e=>{e.preventDefault();box.classList.remove('over')}));
+box.addEventListener('drop',async e=>{
+  const dt=e.dataTransfer;let txt='';
+  for(const f of dt.files)txt+=await f.text()+'\n';
+  txt+=(dt.getData('text/uri-list')||dt.getData('text/plain'))+'\n';
+  box.value=(box.value.trim()+'\n'+txt).trim();run();
+});
+box.addEventListener('paste',()=>setTimeout(run,50));
+$('go').onclick=run;
+$('clear').onclick=()=>{box.value='';results=[];render()};
+$('copy').onclick=async()=>{const t=results.filter(r=>filter==='all'||r.type===filter).map(r=>r.url).join('\n');try{await navigator.clipboard.writeText(t);$('copy').textContent='Đã copy ✓'}catch{box.value=t}setTimeout(()=>$('copy').textContent='Copy tất cả link',1500)};
+$('fa').onclick=()=>{filter='audio';render()};$('fv').onclick=()=>{filter='video';render()};$('fall').onclick=()=>{filter='all';render()};
+</script>
+</body>
+</html>
